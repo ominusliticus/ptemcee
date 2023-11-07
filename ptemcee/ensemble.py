@@ -34,8 +34,10 @@ class Ensemble(object):
     x = attr.ib(type=np.ndarray, converter=np.array)
     logP = attr.ib(type=np.ndarray, default=None)
     logl = attr.ib(type=np.ndarray, default=None)
+    weights = attr.ib(type=np.ndarray, default=None)
 
     adaptive = attr.ib(type=bool, converter=bool, default=False)
+    is_bmm = attr.ib(type=bool, converter=bool, default=False)
 
     _random = attr.ib(type=RandomState, validator=instance_of(RandomState), factory=RandomState)
     _mapper = attr.ib(default=map)
@@ -68,7 +70,11 @@ class Ensemble(object):
 
         # If we have no likelihood or prior values, compute them.
         if self.logP is None or self.logl is None:
-            logl, logp = self._evaluate(self.x)
+            if self.weights is None and self.is_bmm:
+                logl, logp, ws = self._evaluate(self.x)
+                self.weights = ws
+            else:
+                logl, logp = self._evaluate(self.x)
             self.logP = self._tempered_likelihood(logl) + logp
             self.logl = logl
 
@@ -76,8 +82,8 @@ class Ensemble(object):
             raise ValueError('Attempting to start with samples outside posterior support.')
 
     def step(self):
-        self._stretch(self.x, self.logP, self.logl)
-        self.x = self._temperature_swaps(self.x, self.logP, self.logl)
+        self._stretch(self.x, self.logP, self.logl, self.weights)
+        self.x = self._temperature_swaps(self.x, self.logP, self.logl, self.weights)
         ratios = self.swaps_accepted / self.swaps_proposed
 
         # TODO: Should the notion of a 'complete' iteration really include the temperature adjustment?
@@ -90,7 +96,7 @@ class Ensemble(object):
 
         self.time += 1
 
-    def _stretch(self, x, logP, logl):
+    def _stretch(self, x, logP, logl, weights):
         """
         Perform the stretch-move proposal on each ensemble.py.
 
@@ -117,7 +123,10 @@ class Ensemble(object):
                               z[k, :].reshape((w, 1)) *
                               (x_update[k, :, :] - x_sample[k, js, :]))
 
-            y_logl, y_logp = self._evaluate(y)
+            if self.is_bmm:
+                y_logl, y_logp, y_ws = self._evaluate(y)
+            else:
+                y_logl, y_logp = self._evaluate(y)
             y_logP = self._tempered_likelihood(y_logl) + y_logp
 
             logp_accept = d * np.log(z) + y_logP - logP[:, j_update::2]
@@ -129,6 +138,9 @@ class Ensemble(object):
             x_update.reshape((-1, d))[accepts, :] = y.reshape((-1, d))[accepts, :]
             logP[:, j_update::2].reshape((-1,))[accepts] = y_logP.reshape((-1,))[accepts]
             logl[:, j_update::2].reshape((-1,))[accepts] = y_logl.reshape((-1,))[accepts]
+
+            if self.is_bmm:
+                weights[:, j_update::2].reshape((-1,))[accepts] = y_ws.reshape((-1,))[accepts]
 
             self.jumps_accepted[:, j_update::2] = accepts.reshape((t, w))
 
@@ -145,7 +157,8 @@ class Ensemble(object):
         results = itertools.chain.from_iterable(self._mapper(self._config.evaluator, values))
 
         # Construct into a pre-allocated ndarray.
-        array = np.fromiter(results, float, 2 * length).reshape(shape + (2,))
+        z = 3 if self.is_bmm else 2
+        array = np.fromiter(results, float, z * length).reshape(shape + (z,))
         return tuple(np.rollaxis(array, -1))
 
     def _tempered_likelihood(self, logl, betas=None):
@@ -191,7 +204,7 @@ class Ensemble(object):
         # Don't mutate the ladder here; let the client code do that.
         return betas - betas0
 
-    def _temperature_swaps(self, x, logP, logl):
+    def _temperature_swaps(self, x, logP, logl, weights):
         """
         Perform parallel-tempering temperature swaps on the state in ``x`` with associated ``logP`` and ``logl``.
 
@@ -227,5 +240,10 @@ class Ensemble(object):
             x[i - 1, i1perm[sel], :] = x_temp
             logl[i - 1, i1perm[sel]] = logl_temp
             logP[i - 1, i1perm[sel]] = logP_temp + dbeta * logl_temp
+
+            if self.is_bmm:
+                ws_temp = np.copy(weights[i, iperm[sel]])
+                weights[i, iperm[sel]] = weights[i - 1, i1perm[sel]]
+                weights[i - 1, i1perm[sel]] = ws_temp
 
         return x

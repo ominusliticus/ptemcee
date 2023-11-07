@@ -7,6 +7,8 @@ __all__ = ['Chain']
 import attr
 import numpy as np
 
+from tqdm import tqdm
+
 from . import util
 from . import ensemble
 
@@ -18,6 +20,7 @@ class Chain(object):
     x = attr.ib(type=np.ndarray, init=False, default=None)
     logP = attr.ib(type=np.ndarray, init=False, default=None)
     logl = attr.ib(type=np.ndarray, init=False, default=None)
+    weights = attr.ib(type=np.ndarray, init=False, default=None)
     betas = attr.ib(type=np.ndarray, init=False, default=None)
 
     swaps_proposed = attr.ib(type=np.ndarray, init=False)
@@ -31,6 +34,7 @@ class Chain(object):
         self.x = np.empty((0, self.ntemps, self.nwalkers, self.ndim), float)
         self.logP = np.empty((0, self.ntemps, self.nwalkers), float)
         self.logl = np.empty((0, self.ntemps, self.nwalkers), float)
+        self.weights = np.empty((0, self.ntemps, self.nwalkers), float)
         self.betas = np.empty((0, self.ntemps), float)
 
         self.jumps_proposed = np.zeros((self.ntemps, self.nwalkers))
@@ -76,7 +80,7 @@ class Chain(object):
         ja0 = self.jumps_accepted.copy()
         sp0 = self.swaps_proposed.copy()
         sa0 = self.swaps_accepted.copy()
-        for _ in self.iterate(count):
+        for _ in tqdm(self.iterate(count)):
             pass
         jp = self.jumps_proposed - jp0
         ja = self.jumps_accepted - ja0

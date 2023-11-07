@@ -96,6 +96,14 @@ class LogPriorGaussian(object):
             return 0
 
 
+class EmptyWeightClass(object):
+    def __init__(self):
+        pass
+
+    def __call__(self, x):
+        return 1.0
+
+
 class Tests(object):
     sampler = None  # type: Sampler
 

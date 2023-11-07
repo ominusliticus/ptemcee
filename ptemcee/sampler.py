@@ -125,10 +125,13 @@ class LikePriorEvaluator(object):
 
     logl = attr.ib()
     logp = attr.ib()
+    is_bmm = attr.ib(converter=bool)
     logl_args = attr.ib(factory=list)
     logp_args = attr.ib(factory=list)
+    weights_args = attr.ib(factory=list)
     logl_kwargs = attr.ib(factory=dict)
     logp_kwargs = attr.ib(factory=dict)
+    weights_kwargs = attr.ib(factory=dict)
 
     def __call__(self, x):
         lp = self.logp(x, *self.logp_args, **self.logp_kwargs)
@@ -139,11 +142,17 @@ class LikePriorEvaluator(object):
             # Can't return -inf, since this messes with beta=0 behaviour.
             ll = 0
         else:
-            ll = self.logl(x, *self.logl_args, **self.logl_kwargs)
+            if self.is_bmm:
+                ll, ws = self.logl(x, *self.logl_args, **self.logl_kwargs)
+            else:
+                ll = self.logl(x, *self.logl_args, **self.logl_kwargs)
             if np.isnan(ll).any():
                 raise ValueError('Log likelihood function returned NaN.')
 
-        return ll, lp
+        if self.is_bmm:
+            return ll, lp, ws
+        else:
+            return ll, lp
 
 
 @attr.s(slots=True, frozen=True)
@@ -160,6 +169,7 @@ class Sampler(object):
     logp_kwargs = attr.ib(converter=dict, factory=dict)
 
     betas = attr.ib(default=None)
+    is_bmm = attr.ib(converter=bool, default=False)
 
     # Tuning parameters.
     adaptive = attr.ib(converter=bool, default=False)
@@ -209,10 +219,11 @@ class Sampler(object):
         object.__setattr__(self, '_evaluator',
                            LikePriorEvaluator(logl=self.logl,
                                               logp=self.logp,
+                                              is_bmm=self.is_bmm,
                                               logl_args=self.logl_args,
                                               logp_args=self.logp_args,
                                               logl_kwargs=self.logl_kwargs,
-                                              logp_kwargs=self.logp_kwargs))
+                                              logp_kwargs=self.logp_kwargs,))
 
     def ensemble(self, x, random=None):
         if random is None:
@@ -228,6 +239,7 @@ class Sampler(object):
                                  betas=self.betas.copy(),
                                  config=config,
                                  adaptive=self.adaptive,
+                                 is_bmm=self.is_bmm,
                                  random=random,
                                  mapper=self._mapper)
 
